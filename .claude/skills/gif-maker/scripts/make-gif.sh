@@ -18,11 +18,9 @@
 set -euo pipefail
 
 # ---------- defaults ----------
-# fps/width match this project's ref/go.gif (640px, 10fps) — visual quality is
-# governed by encode parameters (resolution/fps/colors/dither), not file weight,
-# so baking these in gives "reference-grade quality" to any install, not just
-# ones that also happen to have ref/go.gif on disk. See -R/--reference for
-# matching a specific file's weight/resolution instead of/in addition to this.
+# Quality (fps/width/colors/dither) and weight (max size) baselines are fixed
+# constants below, not read from any file on disk — they're identical on
+# every install of this skill, with nothing extra to ship alongside it.
 FPS=10
 WIDTH=640
 CROP=""
@@ -40,7 +38,11 @@ MAX_SIZE_ARG=""
 REFERENCE=""
 WIDTH_SET=0
 MAX_SIZE_SET=0
-DEFAULT_REFERENCE="ref/go.gif"
+# Built-in weight ceiling, applied by default when neither -m/--max-size nor
+# -R/--reference is given. Used to be looked up from a locally-present GIF's
+# file size — that read the same value but only worked when that file
+# happened to exist; the number is now baked in directly.
+DEFAULT_MAX_SIZE_BYTES=8223879
 
 usage() {
   cat <<'EOF'
@@ -77,37 +79,38 @@ Common options:
                              encode comes out bigger, fps/colors (and width, but
                              never below -R's floor) are stepped down and it
                              re-encodes automatically until it fits or hits a floor.
+                             Default: a built-in ~7.8M ceiling, applied unless you
+                             pass -m or -R yourself (prints a note when it does).
   -R, --reference FILE      shorthand for "not worse than FILE": sets --width to
                              FILE's resolution (a floor auto-tune won't shrink below)
                              and --max-size to FILE's weight (a ceiling), in one go.
                              An explicit -w or --max-size of your own overrides just
-                             that half. Auto-applies to ./ref/go.gif when it exists
-                             and you passed neither -w nor --max-size (prints a note
-                             when it does).
+                             that half. FILE must exist on disk — this only matches
+                             a real file you point it at, nothing is auto-detected.
   -h, --help                show this help
 
 Examples:
   # Video clip, cropped to a region, sped up 2x, 10s starting at 0:05
-  make-gif.sh -i sources/mv.mov -o out/demo.gif -s 5 -t 10 --speed 2 \
+  make-gif.sh -i input.mov -o out/demo.gif -s 5 -t 10 --speed 2 \
     --crop "2400:1600:500:300" -r 12 -w 640
 
   # Auto-detect crop (e.g. strip browser chrome from a screen recording)
-  make-gif.sh -i sources/mv.mov -o out/demo.gif --crop auto
+  make-gif.sh -i input.mov -o out/demo.gif --crop auto
 
   # Slideshow from a folder of photos, 1.5s per photo
   make-gif.sh -i photos/ -o out/slideshow.gif -p 1.5 -w 720
 
   # Must not exceed 2MB — auto-tunes fps/width/colors down until it fits
-  make-gif.sh -i sources/mv.mov -o out/demo.gif --max-size 2M
+  make-gif.sh -i input.mov -o out/demo.gif --max-size 2M
 
   # Match another GIF's size exactly (a budget, not a quality target)
-  make-gif.sh -i sources/mv.mov -o out/demo.gif --max-size ref/go.gif
+  make-gif.sh -i input.mov -o out/demo.gif --max-size reference.gif
 
   # Match another GIF's resolution (width, not weight)
-  make-gif.sh -i sources/mv.mov -o out/demo.gif --speed 2 -w ref/go.gif
+  make-gif.sh -i input.mov -o out/demo.gif --speed 2 -w reference.gif
 
-  # "Not worse than ref/go.gif": resolution floor + weight ceiling, both at once
-  make-gif.sh -i sources/mv.mov -o out/demo.gif --speed 2 --reference ref/go.gif
+  # "Not worse than reference.gif": resolution floor + weight ceiling, both at once
+  make-gif.sh -i input.mov -o out/demo.gif --speed 2 --reference reference.gif
 EOF
 }
 
@@ -185,20 +188,21 @@ ensure_ffmpeg || { echo "Error: ffmpeg/ffprobe still not available, aborting" >&
 
 [[ -n "$INPUT" ]] || { echo "Error: -i/--input is required" >&2; exit 1; }
 
-# ---------- "not worse than a reference" ----------
-# No explicit -w/--max-size, but a reference GIF sits at the default path?
-# Hold the line on it without being asked every time.
-if [[ -z "$REFERENCE" && "$WIDTH_SET" -eq 0 && "$MAX_SIZE_SET" -eq 0 && -f "$DEFAULT_REFERENCE" ]]; then
-  REFERENCE="$DEFAULT_REFERENCE"
-  echo "No -w/--max-size given — holding output to not-worse-than $DEFAULT_REFERENCE (resolution floor + weight ceiling). Pass -w/--max-size/--reference yourself to change this." >&2
-fi
-
 REFERENCE_ACTIVE=0
 if [[ -n "$REFERENCE" ]]; then
   [[ -f "$REFERENCE" ]] || { echo "Error: --reference file not found: $REFERENCE" >&2; exit 1; }
   REFERENCE_ACTIVE=1
   [[ "$WIDTH_SET" -eq 0 ]] && WIDTH="$REFERENCE"
   [[ "$MAX_SIZE_SET" -eq 0 ]] && MAX_SIZE_ARG="$REFERENCE"
+fi
+
+# ---------- built-in weight baseline ----------
+# Neither -m/--max-size nor -R/--reference given? Cap at the built-in ceiling
+# instead of leaving weight unconstrained. This is a fixed constant (see
+# DEFAULT_MAX_SIZE_BYTES above) — no file is read to get it.
+if [[ -z "$MAX_SIZE_ARG" ]]; then
+  MAX_SIZE_ARG="$DEFAULT_MAX_SIZE_BYTES"
+  echo "No -m/--max-size given — capping output at the built-in baseline (~$(( DEFAULT_MAX_SIZE_BYTES / 1024 / 1024 ))M). Pass -m/--max-size/--reference yourself to change this." >&2
 fi
 
 # -w/--width also accepts a path to another file — resolve it to that file's

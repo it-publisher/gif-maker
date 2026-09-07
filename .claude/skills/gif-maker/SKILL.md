@@ -68,24 +68,24 @@ scale, speed, trim) needed to get from raw footage/photos to a usable GIF.
 | `--colors` | both | `256` | palette size, 2-256 |
 | `--dither` | both | `sierra2_4a` | `none` for flat UI/screenshot content, keeps edges crisp |
 | `--stats-mode` | both | `full` | `diff` for screencasts/whiteboards: mostly-static frame with one small moving region — gives the moving part more palette budget |
-| `-m, --max-size` | both | none | size budget: `8M`, `500K`, a raw byte count, or a path to another file to match its size. Over budget → auto re-encodes, stepping fps down, then width (never below a `-R` floor), then colors, until it fits or hits a floor |
-| `-R, --reference` | both | `ref/go.gif` if it exists and neither `-w` nor `--max-size` was passed | shorthand for "not worse than FILE": `-w FILE` (resolution floor) + `--max-size FILE` (weight ceiling) together. An explicit `-w`/`--max-size` of your own overrides just that half |
+| `-m, --max-size` | both | a built-in ~7.8M ceiling | size budget: `8M`, `500K`, a raw byte count, or a path to another file to match its size. Over budget → auto re-encodes, stepping fps down, then width (never below a `-R` floor), then colors, until it fits or hits a floor |
+| `-R, --reference` | both | none | shorthand for "not worse than FILE": `-w FILE` (resolution floor) + `--max-size FILE` (weight ceiling) together. `FILE` must exist on disk — nothing is auto-detected. An explicit `-w`/`--max-size` of your own overrides just that half |
 
 **Quality vs. weight — these are two different knobs, don't conflate them:**
 
-- **Quality** (does it look as good as the reference?) is set by `-r`/`-w`/`--colors`/
-  `--dither` — the defaults (`10`/`640`/`256`/`sierra2_4a`) are already tuned to match
-  `ref/go.gif`'s own encode parameters, so a fresh install with *no reference file
-  present* still produces reference-grade quality on its own. This is what travels with
-  the skill wherever it's installed.
-- **Weight/resolution vs. one specific file** is what `-m/--max-size` and `-w <file>` /
-  `-R/--reference` control. `--max-size` alone is a hard ceiling on bytes, not a quality
-  target — it does not try to *match* a file's look, only to not exceed its weight, and
-  hitting a tight ceiling on hard content can cost real quality (see "Fitting a size
-  budget"). `--reference` additionally pins resolution as a floor the size-budget tuning
-  won't cross. This mechanism only fires when the named file actually exists on disk —
-  it's a per-install convenience (this repo's default target is `ref/go.gif`), not
-  something a fresh install gets for free without that file.
+- **Quality** (does it look sharp?) is set by `-r`/`-w`/`--colors`/`--dither` — the
+  defaults (`10`/`640`/`256`/`sierra2_4a`) are fixed constants in the script, tuned to a
+  known-good baseline. A fresh install produces that quality with no flags and no extra
+  file needed.
+- **Weight** is `-m/--max-size`. Its own default is also a fixed constant (see
+  `DEFAULT_MAX_SIZE_BYTES` in the script, ~7.8M) — applied automatically whenever you
+  don't pass `-m` or `-R` yourself, no file lookup involved. It's a hard ceiling on
+  bytes, not a quality target — it does not try to *match* any file's look, only to not
+  exceed a weight, and hitting a tight ceiling on hard content can cost real quality
+  (see "Fitting a size budget").
+- **Matching one specific file** — resolution, weight, or both — is what `-w <file>` /
+  `-m <file>` / `-R/--reference <file>` are for. These only ever act on a file you
+  explicitly name; the script never goes looking for one on its own.
 
 ## Turning a spoken request into flags
 
@@ -106,7 +106,7 @@ ambiguous about *direction* (rarely).
 | "почётче", "покачественнее", "не мыльный" | raise quality | bump `--width`, keep `--colors` at 256, consider `--dither floyd_steinberg` |
 | "плавнее", "не дёргается" | smoother motion | raise `--fps` (note it costs size) |
 | "слайд-шоу", "подольше на каждом фото" | photo timing | set `-p` (seconds/photo) from what they said, or a comfortable default like 1.5-2s |
-| no quality/size steer at all | — | defaults (`-r 10 -w 640`) already match `ref/go.gif`'s own encode parameters — reference-grade quality with no flags, no reference file needed. If `ref/go.gif` also exists on disk and neither `-w`/`--max-size` was given, the script additionally caps weight to it (see "Not worse than a reference" below) — that's a bonus on top, not what makes quality good |
+| no quality/size steer at all | — | defaults (`-r 10 -w 640`, capped at the built-in ~7.8M weight ceiling) already give good quality with no flags and no reference file needed — see "Quality vs. weight" above |
 
 If a request has no clear direction at all (e.g. "сделай покрасивее" with nothing to
 anchor it), pick the most likely reading, say what you picked, and move on rather than
@@ -140,25 +140,24 @@ in a GIF. Two ways to remove it:
 
 ## Fitting a size budget
 
-`--max-size` makes the size budget a hard constraint instead of something you eyeball
-after the fact. Pass a byte size (`8M`, `500K`) or the path to a file whose size to
-match (`--max-size ref/go.gif`). If the first encode comes out bigger, the script
-re-encodes automatically: fps down (video only, floor 5), then width down (floor 160,
-or a `-R` reference's own width if one is active — see below), then colors down (floor
-32) — one step at a time, cheapest-looking cut first, up to 15 retries. It stops and
-warns if it hits every floor and is still over budget; at that point the only lever
+Weight is always constrained — either the built-in ~7.8M default, or a budget you set
+explicitly. Pass a byte size (`8M`, `500K`) or the path to a file whose size to match
+(`--max-size reference.gif`) to `-m/--max-size`. If the encode comes out bigger, the
+script re-encodes automatically: fps down (video only, floor 5), then width down (floor
+160, or a `-R` reference's own width if one is active — see below), then colors down
+(floor 32) — one step at a time, cheapest-looking cut first, up to 15 retries. It stops
+and warns if it hits every floor and is still over budget; at that point the only lever
 left is trimming the duration, which the script won't do on its own since it changes
 *what's in the GIF*, not just how it's encoded.
 
-This does **not** make the output resemble the reference file in any way — it only
-caps the weight. A photo-realistic source pushed through `--max-size ref/go.gif` will
-still look like a heavily fps/width/color-starved version of itself, not like the
-reference's content or style. See "Worked example" below for why: for high-entropy
-footage (video/photos with real motion, gradients, noise), even an untuned encode may
-already be near-optimal for its content — auto-tuning then has to cut real quality to
-hit an arbitrary budget, and the retry log makes that trade-off visible rather than
-silent. Report the final `fps=/width=/colors=` line to the user rather than just the
-size — that's the compromise they're actually getting.
+This does **not** make the output resemble any reference file's look — it only caps the
+weight. A photo-realistic source pushed through a tight `--max-size` will still look
+like a heavily fps/width/color-starved version of itself, not like some other file's
+content or style. For high-entropy footage (video/photos with real motion, gradients,
+noise), even an untuned encode may already be near-optimal for its content —
+auto-tuning then has to cut real quality to hit the budget, and the retry log makes
+that trade-off visible rather than silent. Report the final `fps=/width=/colors=` line
+to the user rather than just the size — that's the compromise they're actually getting.
 
 ## "Not worse than a reference" — `-R, --reference`
 
@@ -167,43 +166,14 @@ already covered by the defaults (see "Quality vs. weight" above) with no file ne
 `--reference FILE` bundles both floors into one flag: `-w FILE` (resolution — a floor,
 enforced through auto-tune too) plus `--max-size FILE` (weight — a ceiling). Use it
 instead of composing `-w`/`--max-size` by hand whenever the ask is "as good as X, not
-heavier than X" rather than a specific number.
+heavier than X" rather than a specific number. `FILE` must be a real path on disk you
+(or the user) name explicitly — the script never searches for or assumes one.
 
-**This project defaults to it.** If neither `-w` nor `--max-size` was passed and
-`ref/go.gif` exists (relative to the working directory), the script applies
-`--reference ref/go.gif` on its own and prints a line saying so — every GIF built here
-without explicit sizing flags is automatically held to "resolution ≥ ref/go.gif's,
-weight ≤ ref/go.gif's," with no flag to remember. Pass your own `-w`/`--max-size` to
-opt out of the piece you're overriding (each overrides only its own half); pass
-`--reference <other-file>` to hold against a different file instead.
-
-Because resolution is a hard floor here, a size budget that's simply impossible at that
-resolution (very long/high-motion source, tight `--max-size`) will end with a "still
-over budget" warning rather than silently shrinking below the reference's resolution —
-see "Fitting a size budget" above. That's the intended trade-off: the resolution
-promise wins over the weight one when they conflict.
-
-## Worked example (this project)
-
-`ref/go.gif` is an 8MB, 640x360, 10fps, 6s reference — that's ~137KB/frame, unoptimized.
-`sources/mv.mov` is a 57s screen recording of a whiteboard (Safari, `boards.yandex.ru`)
-with browser chrome visible and dead air before the drawing starts.
-
-To produce a comparable but much smaller GIF of the interesting part:
-
-```bash
-# 1. find the drawing start and the board's on-screen rectangle from stills
-ffmpeg -ss 25 -i sources/mv.mov -frames:v 1 /tmp/check.png
-
-# 2. encode: crop to the board, skip the dead air, diff stats for a mostly-static frame
-#    (fps/width are already the defaults — 10/640 — no need to pass them)
-.claude/skills/gif-maker/scripts/make-gif.sh \
-  -i sources/mv.mov -o out/hural.gif \
-  -s 25 -t 12 --crop "2400:1500:500:400" --stats-mode diff
-```
-
-Adjust the crop rectangle and `-s`/`-t` window once you've inspected actual stills —
-don't guess coordinates blind.
+Because resolution is a hard floor when `-R` is active, a size budget that's simply
+impossible at that resolution (very long/high-motion source, tight `--max-size`) will
+end with a "still over budget" warning rather than silently shrinking below the
+reference's resolution — see "Fitting a size budget" above. That's the intended
+trade-off: the resolution promise wins over the weight one when they conflict.
 
 ## Known limitations
 
