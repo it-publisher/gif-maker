@@ -35,8 +35,8 @@
 Вставь это в Claude Code или любой клиент, читающий Agent Skills:
 
 ```text
-Установи скилл gif-maker из <repo-url> в этот проект
-(.claude/skills/gif-maker/), затем сделай мне GIF:
+Установи скилл gif-maker из https://github.com/it-publisher/gif-maker в этот
+проект (.claude/skills/gif-maker/), затем сделай мне GIF:
 
 Вход: [путь к видео или папка с фото]
 Что нужно: [опиши словами — кроп, скорость, длина, насколько лёгкий/чёткий]
@@ -49,11 +49,16 @@
 <summary><b>Ручная установка</b> — то же самое по шагам</summary>
 
 ```bash
-# 1. Скопируй скилл в папку скиллов своего клиента
-cp -r .claude/skills/gif-maker ~/.claude/skills/
-# — или оставь локально в проекте: .claude/skills/gif-maker/ (как в этом репо)
+# 1. Склонируй репозиторий со скиллом
+git clone https://github.com/it-publisher/gif-maker.git
+cd gif-maker
 
-# 2. Запускай напрямую, без агента
+# 2. Скопируй скилл в папку скиллов своего клиента...
+cp -r .claude/skills/gif-maker ~/.claude/skills/
+# ...или используй прямо из клона проекта, без копирования никуда
+
+# 3. Запускай напрямую, без агента — путь ниже подходит для варианта "из клона";
+#    если скопировал в ~/.claude/skills/, замени его на ~/.claude/skills/gif-maker/scripts/make-gif.sh
 
 # Видео: обрезка, кроп, ускорение, кодирование
 .claude/skills/gif-maker/scripts/make-gif.sh \
