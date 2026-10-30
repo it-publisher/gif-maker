@@ -1,6 +1,6 @@
 ---
 name: gif-maker
-description: Convert a video clip or a set of photos into an optimized animated GIF using ffmpeg's two-pass palette pipeline (palettegen/paletteuse). Use when the user asks to make/create/build a GIF from a video (.mov/.mp4/etc.) or from photos, or to shrink/improve an existing GIF's file size or quality.
+description: Convert a video clip, a set of photos, or an existing GIF into an optimized animated GIF using ffmpeg's two-pass palette pipeline (palettegen/paletteuse) and gifsicle. Use when the user asks to make/create/build a GIF from a video (.mov/.mp4/etc.) or from photos, or to shrink/improve an existing GIF's file size or quality.
 ---
 
 # gif-maker
@@ -32,9 +32,14 @@ scale, speed, trim) needed to get from raw footage/photos to a usable GIF.
   it does not auto-run `sudo` since that needs an interactive password.
 - **Other/unrecognized OS**: points to https://ffmpeg.org/download.html.
 
+`gifsicle` is optional: when present, every output is recompressed with `-O3`
+(lossless) and `--lossy N` becomes available. Without it, existing GIFs still
+re-encode correctly, just without the lossless frame optimization.
+
 ## Procedure
 
-1. Identify the input: a single video file, a directory of photos, or a glob of photos.
+1. Identify the input: a single video file, a directory of photos, a glob of photos,
+   or an existing `.gif`.
 2. If the user described the result in words rather than flags (crop, speed, quality,
    length), translate it — see "Turning a spoken request into flags" below. For any
    numeric value you can't read off the request itself (crop rectangle, trim window),
@@ -43,9 +48,11 @@ scale, speed, trim) needed to get from raw footage/photos to a usable GIF.
    ```bash
    .claude/skills/gif-maker/scripts/make-gif.sh -i INPUT -o OUTPUT.gif [options]
    ```
-4. Check the reported output size (`Done: out.gif (X.XM)`). If it's too big, first
+4. Check the reported output size (`Done: out.gif (X.XM, ...)`). If it's too big, first
    lower `--fps` or `--width` (biggest impact), then `--colors`; only trim the duration
-   as a last resort if the content genuinely needs to stay full-length.
+   as a last resort if the content genuinely needs to stay full-length. For an existing
+   GIF the default is lossless `gifsicle -O3`; add `--lossy N` only when the user accepts
+   a small visual trade-off.
 5. `ffprobe` the result if you need to confirm dimensions/frame count/duration match
    expectations. Pull a frame or two from the output to sanity-check crop/legibility
    before calling it done — a wrong crop rectangle is a silent failure otherwise.
@@ -56,19 +63,21 @@ scale, speed, trim) needed to get from raw footage/photos to a usable GIF.
 
 | Flag | Applies to | Default | Notes |
 |---|---|---|---|
-| `-i, --input` | both | — | video file, photo dir, or quoted glob (`"photos/*.jpg"`) |
+| `-i, --input` | both | — | video file, photo dir, quoted glob (`"photos/*.jpg"`), or existing `.gif` |
 | `-o, --output` | both | `out/<name>.gif` or `./<name>.gif` | created dir if needed |
-| `-s, --start` | video | start of file | `HH:MM:SS` or seconds |
-| `-t, --duration` | video | whole clip | seconds to encode |
-| `--speed` | video | `1` | `2` = 2x faster (timelapse), `0.5` = half speed |
-| `--crop` | video | none | `"w:h:x:y"`, or `auto` to detect UI chrome/letterboxing |
-| `-p, --photo-time` | photos | `1/fps` | seconds each photo is shown |
-| `-r, --fps` | both | `10` | output frame rate |
-| `-w, --width` | both | `640` | px, or a path to another file — uses *its* pixel width; height auto, kept even |
+| `-s, --start` | video/GIF | start of file | `HH:MM:SS` or seconds |
+| `-t, --duration` | video/GIF | whole clip | seconds to encode, applied before `--speed` (output = `t/speed`) |
+| `--speed` | video/GIF | `1` | `2` = 2x faster (timelapse), `0.5` = half speed |
+| `--crop` | both | none | `"w:h:x:y"` for video/GIF/photos, or `auto` (video/GIF only) to detect UI chrome/letterboxing |
+| `-p, --photo-time` | photos | `1/fps` | seconds each photo is shown; when set it replaces `-r` as the output rate |
+| `-r, --fps` | both | `10` | output frame rate. For photos it only sets the default `-p` (real fps = `1/photo-time`); for `.gif` input the source rate is kept unless you pass `-r` |
+| `-w, --width` | both | `640` | px, or a path to another file — uses *its* pixel width; height auto, kept even. For `.gif` input the source width is kept unless you pass `-w` |
 | `--colors` | both | `256` | palette size, 2-256 |
 | `--dither` | both | `sierra2_4a` | `none` for flat UI/screenshot content, keeps edges crisp |
 | `--stats-mode` | both | `full` | `diff` for screencasts/whiteboards: mostly-static frame with one small moving region — gives the moving part more palette budget |
-| `-m, --max-size` | both | a built-in ~7.8M ceiling | size budget: `8M`, `500K`, a raw byte count, or a path to another file to match its size. Over budget → auto re-encodes, stepping fps down, then width (never below a `-R` floor), then colors, until it fits or hits a floor |
+| `--loop` | both | `0` | `0` = forever, `-1` = play once, `N` = repeat N times |
+| `-m, --max-size` | both | a built-in ~7.8M ceiling | size budget: `8M`, `500K`, a raw byte count, or a path to another file to match its size. `none` disables the cap. Over budget → auto re-encodes, stepping fps down, then width (never below a `-R` floor), then colors, until it fits or hits a floor |
+| `--lossy N` | both | `0` | gifsicle lossy level 0-200 (higher = smaller, slightly less precise); requires gifsicle. For pure GIF optimization the script escalates levels automatically only when no level was pinned |
 | `-R, --reference` | both | none | shorthand for "not worse than FILE": `-w FILE` (resolution floor) + `--max-size FILE` (weight ceiling) together. `FILE` must exist on disk — nothing is auto-detected. An explicit `-w`/`--max-size` of your own overrides just that half |
 
 **Quality vs. weight — these are two different knobs, don't conflate them:**
@@ -101,6 +110,9 @@ ambiguous about *direction* (rarely).
 | "помедленнее", "замедли", "slow-mo" | slow down | `--speed 0.5` |
 | "покороче", "вырежи самое интересное" | trim | scan a few stills across the timeline to find the window, then `-s`/`-t` |
 | "весит много", "полегче", "сожми" | shrink the file, no hard number given | lower `--fps` and `--width` first, then `--colors`; explain the trade-off if you had to cut hard |
+| "сожми эту гифку", "уменьши готовый GIF", "shrink this GIF" | recompress an existing GIF | just `-i file.gif` — source fps/width are kept and `gifsicle -O3` runs losslessly. Add `--max-size` for a hard budget |
+| "ещё легче, но без потери качества" (existing GIF) | smaller, still lossless | lossless is already the default and its ceiling is real (`gifsicle -O3`); say so instead of silently adding `--lossy` |
+| "сильнее сожми, пиксели не важны" (existing GIF) | accept requantization | `--lossy 40` (raise it to 60-100 for more), or let a `--max-size` budget escalate lossy automatically |
 | "не больше N МБ/КБ", "уложись в размер X" (weight only) | a concrete size cap | `--max-size` with that value, or the file's path — let the script's auto-tune find the params, don't hand-guess them |
 | "не хуже референса/этого файла", "как X, но не тяжелее" (resolution *and* weight) | both floors at once | `--reference FILE` — don't compose `-w`/`--max-size` by hand for this, it's one flag |
 | "почётче", "покачественнее", "не мыльный" | raise quality | bump `--width`, keep `--colors` at 256, consider `--dither floyd_steinberg` |
@@ -126,6 +138,24 @@ in a GIF. Two ways to remove it:
   ffmpeg -ss 5 -i input.mov -frames:v 1 frame.png   # inspect this to find the rect
   ```
 
+## Optimizing an existing GIF
+
+A `.gif` input gets special treatment: fps and width are taken from the source
+unless you pass `-r`/`-w`, so a 50 fps 960 px GIF is never silently downsampled to
+the generic 10 fps / 640 px defaults.
+
+With no re-encode flags, the script skips ffmpeg entirely and runs `gifsicle -O3`
+— lossless, pixels untouched. `--lossy N` opts into gifsicle's lossy mode (higher
+= smaller); with a `--max-size` budget and no pinned `--lossy`, the script
+escalates 20 → 200 automatically and reports the level it landed on. Any
+re-encode option (`-r`, `-w`, `--crop`, `--speed`, `-s`, `-t`, `--colors`,
+`--dither`, `--stats-mode`, `--loop N` with N≠0, `-R`) switches to the ffmpeg
+palette pipeline, with `gifsicle -O3` applied to the result.
+
+Without gifsicle the GIF still re-encodes at its own fps/width, but the lossless
+frame optimization and `--lossy` are unavailable — tell the user to install it
+(`brew install gifsicle` / `sudo apt-get install -y gifsicle`).
+
 ## Sizing trade-offs
 
 - **fps**: 8-12 fps is plenty for UI/screen content; drawings/typing read fine even at
@@ -137,18 +167,23 @@ in a GIF. Two ways to remove it:
   quality loss is often invisible and the size win is real.
 - **stats-mode diff**: biggest win specifically for screen recordings where most of the
   frame doesn't change (a whiteboard, a cursor moving over a static page).
+- **lossy (existing GIFs)**: after lossless `gifsicle -O3`, `--lossy 20-60` usually
+  shaves another 10-25% with no visible difference; above ~100 artifacts on text and
+  gradients start to show. Don't reach for it when the user asked for "no quality loss".
 
 ## Fitting a size budget
 
-Weight is always constrained — either the built-in ~7.8M default, or a budget you set
-explicitly. Pass a byte size (`8M`, `500K`) or the path to a file whose size to match
-(`--max-size reference.gif`) to `-m/--max-size`. If the encode comes out bigger, the
-script re-encodes automatically: fps down (video only, floor 5), then width down (floor
-160, or a `-R` reference's own width if one is active — see below), then colors down
-(floor 32) — one step at a time, cheapest-looking cut first, up to 15 retries. It stops
-and warns if it hits every floor and is still over budget; at that point the only lever
-left is trimming the duration, which the script won't do on its own since it changes
-*what's in the GIF*, not just how it's encoded.
+Weight is constrained by default (the built-in ~7.8M ceiling) or by a budget you set
+explicitly. Pass a byte size (`8M`, `500K`), the path to a file whose size to match
+(`--max-size reference.gif`), or `none` to disable the cap entirely when the user wants
+maximum quality. If the encode comes out bigger, the script re-encodes automatically:
+fps down (video/GIF, floor 5), then width down (floor 160, or a `-R` reference's own
+width if one is active — see below), then colors down (floor 32) — one step at a time,
+cheapest-looking cut first, up to 15 retries. For a pure GIF optimization there are no
+pixels to cut, so it escalates `gifsicle --lossy` instead (20 → 200) unless you pinned a
+level. It stops and warns if it hits every floor and is still over budget; at that point
+the only lever left is trimming the duration, which the script won't do on its own since
+it changes *what's in the GIF*, not just how it's encoded.
 
 This does **not** make the output resemble any reference file's look — it only caps the
 weight. A photo-realistic source pushed through a tight `--max-size` will still look
@@ -181,3 +216,6 @@ trade-off: the resolution promise wins over the weight one when they conflict.
 - HEIC photos may fail to decode if ffmpeg wasn't built with `libheif`; convert first
   with macOS `sips -s format jpeg in.heic --out in.jpg`.
 - `--crop auto` only catches uniform-color borders, not arbitrary UI chrome.
+- `--lossy` and lossless `-O3` frame optimization need gifsicle; without it a GIF still
+  re-encodes at its own fps/width, just less efficiently. Gifsicle does not install
+  itself.
